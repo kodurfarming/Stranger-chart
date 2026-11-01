@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Talk to Strangers</title>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--text:#1d2433;--muted:#6b7385;--accent:#4f6bff;--them:#e9ecf5;--border:#dde1ee;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1320;--card:#181d2e;--text:#eef0f8;--muted:#98a0b8;--them:#262d45;--border:#2a3150;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:flex;flex-direction:column}
+header{padding:14px 18px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);background:var(--card)}
+h1{font-size:20px;margin:0;color:var(--accent)}
+#online{font-size:13px;color:var(--muted)}
+main{flex:1;display:flex;flex-direction:column;max-width:720px;width:100%;margin:0 auto;min-height:0}
+#gate{margin:auto;padding:24px;text-align:center}
+.box{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;max-width:420px}
+button{font:inherit;border:0;border-radius:10px;padding:11px 18px;cursor:pointer;background:var(--accent);color:#fff;font-weight:600}
+button.ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+button:disabled{opacity:.5;cursor:default}
+#chat{display:none;flex:1;flex-direction:column;min-height:0}
+#videos{display:none;position:relative;background:#000;height:40vh;min-height:180px}
+#remote{width:100%;height:100%;object-fit:cover}
+#local{position:absolute;right:8px;bottom:8px;width:90px;height:120px;object-fit:cover;border-radius:10px;border:2px solid #fff;background:#222}
+#log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px}
+.sys{text-align:center;color:var(--muted);font-size:13px;margin:6px 0}
+.msg{max-width:78%;padding:9px 13px;border-radius:16px;line-height:1.35;word-wrap:break-word}
+.me{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.them{align-self:flex-start;background:var(--them);border-bottom-left-radius:4px}
+.bar{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--border);background:var(--card)}
+.bar input{flex:1;font:inherit;padding:11px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg);color:var(--text);min-width:0}
+footer{padding:10px;text-align:center;font-size:13px;color:var(--muted);border-top:1px solid var(--border);background:var(--card)}
+footer b{color:var(--text)}
+</style>
+</head>
+<body>
+<header><h1>Talk to Strangers</h1><span id="online">● connecting</span></header>
+<main>
+  <div id="gate"><div class="box">
+    <h2 style="margin-top:0">Meet someone new</h2>
+    <p style="color:var(--muted)">You must be 18 or older. Be respectful and never share personal information. You can skip or report anyone at any time.</p>
+    <label style="display:block;margin-bottom:16px;font-size:14px"><input type="checkbox" id="age"> I am 18 or older and agree to the rules</label>
+    <div style="display:flex;gap:10px;justify-content:center">
+      <button id="goText" disabled>Text chat</button>
+      <button id="goVideo" disabled>Video chat</button>
+    </div>
+  </div></div>
+  <div id="chat">
+    <div id="videos"><video id="remote" autoplay playsinline></video><video id="local" autoplay playsinline muted></video></div>
+    <div id="log"></div>
+    <div class="bar">
+      <button class="ghost" id="skip">Skip</button>
+      <input id="text" placeholder="Type a message…" autocomplete="off" disabled>
+      <button id="send" disabled>Send</button>
+      <button class="ghost" id="report" title="Report">⚑</button>
+    </div>
+  </div>
+</main>
+<footer>Created by <b>Sai Anvesh Reddy</b></footer>
+<script>
+var ws, mode = 'text', pc = null, localStream = null, pendingIce = [], connected = false;
+var log = document.getElementById('log'), text = document.getElementById('text'), sendBtn = document.getElementById('send');
+var remoteV = document.getElementById('remote'), localV = document.getElementById('local');
+
+function add(cls, t) { var d = document.createElement('div'); d.className = cls; d.textContent = t; log.appendChild(d); log.scrollTop = log.scrollHeight; }
+function setInput(on) { text.disabled = sendBtn.disabled = !on; if (on) text.focus(); }
+function tx(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+
+function connectWS() {
+  ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+  ws.onopen = function () { connected = true; };
+  ws.onclose = function () { connected = false; document.getElementById('online').textContent = '● offline'; setInput(false); add('sys', 'Connection lost. Reload the page.'); };
+  ws.onmessage = function (e) {
+    var m = JSON.parse(e.data);
+    if (m.type === 'online') document.getElementById('online').textContent = '● ' + m.n + ' online';
+    else if (m.type === 'waiting') add('sys', 'Looking for someone to chat with…');
+    else if (m.type === 'matched') { add('sys', 'You are now chatting with a stranger. Say hi!'); setInput(true); if (mode === 'video') startCall(m.initiator); }
+    else if (m.type === 'chat') add('msg them', m.text);
+    else if (m.type === 'signal') onSignal(m.data);
+    else if (m.type === 'partner_left') { closeCall(); setInput(false); add('sys', 'Stranger disconnected. Press Skip to find someone new.'); }
+  };
+}
+
+function newPC() {
+  pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  localStream.getTracks().forEach(function (t) { pc.addTrack(t, localStream); });
+  pc.ontrack = function (e) { remoteV.srcObject = e.streams[0]; };
+  pc.onicecandidate = function (e) { if (e.candidate) tx({ type: 'signal', data: { ice: e.candidate } }); };
+}
+function startCall(initiator) {
+  closeCall(); newPC();
+  if (initiator) {
+    pc.createOffer().then(function (o) { return pc.setLocalDescription(o); })
+      .then(function () { tx({ type: 'signal', data: { sdp: pc.localDescription } }); });
+  }
+}
+function onSignal(d) {
+  if (!pc) return;
+  if (d.sdp) {
+    pc.setRemoteDescription(d.sdp).then(function () {
+      pendingIce.forEach(function (c) { pc.addIceCandidate(c).catch(function () {}); }); pendingIce = [];
+      if (d.sdp.type === 'offer') {
+        return pc.createAnswer().then(function (a) { return pc.setLocalDescription(a); })
+          .then(function () { tx({ type: 'signal', data: { sdp: pc.localDescription } }); });
+      }
+    });
+  } else if (d.ice) {
+    if (pc.remoteDescription) pc.addIceCandidate(d.ice).catch(function () {}); else pendingIce.push(d.ice);
+  }
+}
+function closeCall() { if (pc) { pc.close(); pc = null; } pendingIce = []; remoteV.srcObject = null; }
+
+function find() { closeCall(); log.innerHTML = ''; setInput(false); tx({ type: 'find', mode: mode }); }
+
+function enter(m) {
+  mode = m;
+  function go() {
+    document.getElementById('gate').style.display = 'none';
+    document.getElementById('chat').style.display = 'flex';
+    if (m === 'video') document.getElementById('videos').style.display = 'block';
+    find();
+  }
+  if (m === 'video') {
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(function (s) { localStream = s; localV.srcObject = s; go(); })
+      .catch(function () { alert('Camera and microphone access is needed for video chat.'); });
+  } else go();
+}
+
+document.getElementById('age').onchange = function () { document.getElementById('goText').disabled = document.getElementById('goVideo').disabled = !this.checked; };
+document.getElementById('goText').onclick = function () { enter('text'); };
+document.getElementById('goVideo').onclick = function () { enter('video'); };
+document.getElementById('skip').onclick = find;
+document.getElementById('report').onclick = function () { tx({ type: 'report' }); add('sys', 'Thanks, this chat was reported.'); find(); };
+function sendMsg() { var v = text.value.trim(); if (!v) return; add('msg me', v); tx({ type: 'chat', text: v }); text.value = ''; }
+sendBtn.onclick = sendMsg;
+text.addEventListener('keydown', function (e) { if (e.key === 'Enter') sendMsg(); });
+connectWS();
+</script>
+</body>
+</html>
